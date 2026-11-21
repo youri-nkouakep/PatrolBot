@@ -2,15 +2,16 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>patrolbot_delivery</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="youri@todo.todo">youri</maintainer>
-  <license>TODO: License declaration</license>
+  <version>1.1.0</version>
+  <description>Machine à états des missions de livraison au-dessus de Nav2</description>
+  <maintainer email="yourinkouakep@gmail.com">Youri Nkouakep</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
 
+  <exec_depend>nav2_simple_commander</exec_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

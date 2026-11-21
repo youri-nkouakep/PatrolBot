@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Perception LiDAR : densité d'obstacles par secteur angulaire (36 secteurs de 10°)."""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -21,6 +22,10 @@ class ObstacleDetectorNode(Node):
         ranges = np.where(np.isinf(ranges), msg.range_max, ranges)
         ranges = np.where(np.isnan(ranges), msg.range_max, ranges)
         sector_size = len(ranges) // self.num_sectors
+        if sector_size == 0:
+            self.get_logger().warn('Moins de rayons LiDAR que de secteurs',
+                                   throttle_duration_sec=5.0)
+            return
         densities = []
         for i in range(self.num_sectors):
             sector = ranges[i*sector_size:(i+1)*sector_size]
@@ -32,5 +37,9 @@ class ObstacleDetectorNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    rclpy.spin(ObstacleDetectorNode())
-    rclpy.shutdown()
+    node = ObstacleDetectorNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

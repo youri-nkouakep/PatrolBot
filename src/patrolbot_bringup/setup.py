@@ -6,7 +6,7 @@ package_name = 'patrolbot_bringup'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.1.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -17,9 +17,9 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='youri',
-    maintainer_email='youri@todo.todo',
-    description='PatrolBot bringup',
+    maintainer='Youri Nkouakep',
+    maintainer_email='yourinkouakep@gmail.com',
+    description='Lancement complet de PatrolBot (Gazebo, Nav2 et nœuds)',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [],

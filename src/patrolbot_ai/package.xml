@@ -2,10 +2,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>patrolbot_ai</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="youri@todo.todo">youri</maintainer>
-  <license>TODO: License declaration</license>
+  <version>1.1.0</version>
+  <description>Planificateur multicritère (distance, temps, obstacles, risque, énergie)</description>
+  <maintainer email="yourinkouakep@gmail.com">Youri Nkouakep</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

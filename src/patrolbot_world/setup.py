@@ -6,7 +6,7 @@ package_name = 'patrolbot_world'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.1.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -19,10 +19,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='youri',
-    maintainer_email='youri@todo.todo',
-    description='PatrolBot delivery city world',
-    license='Apache-2.0',
+    maintainer='Youri Nkouakep',
+    maintainer_email='yourinkouakep@gmail.com',
+    description='Monde Gazebo urbain pour PatrolBot',
+    license='MIT',
     entry_points={
         'console_scripts': [],
     },

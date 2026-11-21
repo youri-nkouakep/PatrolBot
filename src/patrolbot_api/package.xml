@@ -2,15 +2,18 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>patrolbot_api</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="youri@todo.todo">youri</maintainer>
-  <license>TODO: License declaration</license>
+  <version>1.1.0</version>
+  <description>API REST et WebSocket (FastAPI) pour piloter les missions de livraison</description>
+  <maintainer email="yourinkouakep@gmail.com">Youri Nkouakep</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
 
+  <exec_depend>python3-fastapi</exec_depend>
+  <exec_depend>python3-uvicorn</exec_depend>
+  <exec_depend>python3-pydantic</exec_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

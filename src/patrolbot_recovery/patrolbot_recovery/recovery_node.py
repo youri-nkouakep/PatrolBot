@@ -1,125 +1,95 @@
 #!/usr/bin/env python3
+"""Auto-récupération : détecte un blocage pendant une mission et lance une manœuvre.
+
+Le blocage est mesuré sur l'odométrie (le robot n'avance plus alors qu'une
+mission est en cours), et non sur /cmd_vel. Les manœuvres sont exécutées pas à
+pas par un timer, sans bloquer l'exécuteur ROS.
+"""
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, Bool
-from geometry_msgs.msg import Twist
-import time
+from std_msgs.msg import String
+
+from patrolbot_recovery.stuck_detector import RECOVERY_SEQUENCE, StuckDetector
+
 
 class RecoveryNode(Node):
-    STUCK_VEL_THRESHOLD = 0.01
-    STUCK_TIME_THRESHOLD = 5.0
-    MAX_RECOVERY_ATTEMPTS = 3
 
     def __init__(self):
         super().__init__('recovery_node')
-        self.stuck_since = None
-        self.recovery_attempts = 0
-        self.is_recovering = False
+        self.declare_parameter('stuck_window', 5.0)
+        self.declare_parameter('min_progress', 0.05)
+        self.detector = StuckDetector(
+            self.get_parameter('stuck_window').value,
+            self.get_parameter('min_progress').value)
 
-        # Subscriber vitesse
-        self.create_subscription(
-            Twist, '/cmd_vel', self.vel_cb, 10)
+        self.mission_state = 'IDLE'
+        self.attempt = 0          # indice de la prochaine manœuvre
+        self.maneuver = None      # (nom, v, w, fin) de la manœuvre en cours
 
-        # Publisher commandes directes
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-
-        # Publisher statut recovery
-        self.status_pub = self.create_publisher(
-            String, '/recovery/status', 10)
-
-        # Timer monitoring toutes les secondes
-        self.create_timer(1.0, self.monitor)
-
-        self.get_logger().info('Recovery Node démarré !')
-
-        self.delivery_state = 'IDLE'
+        self.create_subscription(Odometry, '/odom', self.odom_cb, 10)
         self.create_subscription(String, '/delivery/status', self.delivery_status_cb, 10)
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.status_pub = self.create_publisher(String, '/recovery/status', 10)
+        self.create_timer(0.1, self.step)
 
-    def vel_cb(self, msg):
-        speed = abs(msg.linear.x) + abs(msg.angular.z)
-        if speed < self.STUCK_VEL_THRESHOLD:
-            if self.stuck_since is None:
-                self.stuck_since = self.get_clock().now()
-        else:
-            if not self.is_recovering:
-                self.stuck_since = None
+        self.get_logger().info('Recovery Node démarré')
 
-    def monitor(self):
-        if self.stuck_since is None or self.is_recovering:
-            return
-        if self.delivery_state in ['IDLE', 'NAVIGATING', 'RETURNING']:
-            return
-        elapsed = (self.get_clock().now() -
-                  self.stuck_since).nanoseconds / 1e9
-        if elapsed < self.STUCK_TIME_THRESHOLD:
-            return
-        self.get_logger().warn(
-            f'BLOCAGE détecté ({elapsed:.1f}s) !')
-        self.execute_recovery()
-
-    def execute_recovery(self):
-        self.is_recovering = True
-        self.recovery_attempts += 1
-        self.publier_status(f'RECOVERING attempt {self.recovery_attempts}')
-
-        if self.recovery_attempts == 1:
-            self.get_logger().info('Recovery 1: Backup')
-            self.backup()
-        elif self.recovery_attempts == 2:
-            self.get_logger().info('Recovery 2: Spin')
-            self.spin_360()
-        elif self.recovery_attempts >= self.MAX_RECOVERY_ATTEMPTS:
-            self.get_logger().error('Recovery échoué — alerte !')
-            self.publier_status('RECOVERY_FAILED')
-
-        self.is_recovering = False
-        self.stuck_since = None
-        if self.recovery_attempts >= self.MAX_RECOVERY_ATTEMPTS:
-            self.recovery_attempts = 0
-
-    def backup(self, distance=0.3):
-        msg = Twist()
-        msg.linear.x = -0.1
-        duration = distance / 0.1
-        end_time = time.time() + duration
-        while time.time() < end_time:
-            self.cmd_pub.publish(msg)
-            time.sleep(0.1)
-        self.stop()
-
-    def spin_360(self):
-        msg = Twist()
-        msg.angular.z = 1.0
-        duration = 3.14 / 0.5
-        end_time = time.time() + duration
-        while time.time() < end_time:
-            self.cmd_pub.publish(msg)
-            time.sleep(0.1)
-        self.stop()
-
-    def stop(self):
-        msg = Twist()
-        self.cmd_pub.publish(msg)
-
-    def publier_status(self, status):
-        msg = String()
-        msg.data = status
-        self.status_pub.publish(msg)
+    def now(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def delivery_status_cb(self, msg):
-        self.delivery_state = msg.data.replace('STATE:', '')
-        if self.delivery_state == 'IDLE':
-            self.stuck_since = None
-            self.recovery_attempts = 0
+        self.mission_state = msg.data.replace('STATE:', '')
+        if self.mission_state == 'IDLE':
+            self.attempt = 0
+
+    def odom_cb(self, msg):
+        if self.maneuver is not None:
+            return
+        p = msg.pose.pose.position
+        if self.detector.update(self.now(), p.x, p.y, self.mission_state):
+            self.start_recovery()
+
+    def start_recovery(self):
+        if self.attempt >= len(RECOVERY_SEQUENCE):
+            self.get_logger().error('Récupération impossible : intervention requise')
+            self.publish_status('RECOVERY_FAILED')
+            self.attempt = 0
+            self.detector.reset()
+            return
+        name, v, w, duration = RECOVERY_SEQUENCE[self.attempt]
+        self.attempt += 1
+        self.maneuver = (name, v, w, self.now() + duration)
+        self.get_logger().warn(f'Blocage détecté : manœuvre {self.attempt} ({name})')
+        self.publish_status(f'RECOVERING {name}')
+
+    def step(self):
+        if self.maneuver is None:
+            return
+        name, v, w, end = self.maneuver
+        cmd = Twist()
+        if self.now() < end:
+            cmd.linear.x = v
+            cmd.angular.z = w
+            self.cmd_pub.publish(cmd)
+            return
+        self.cmd_pub.publish(cmd)   # arrêt
+        self.maneuver = None
+        self.detector.reset()
+        self.publish_status(f'RECOVERED {name}')
+
+    def publish_status(self, text):
+        msg = String()
+        msg.data = text
+        self.status_pub.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)
-    executor = rclpy.executors.MultiThreadedExecutor()
     node = RecoveryNode()
-    executor.add_node(node)
     try:
-        executor.spin()
+        rclpy.spin(node)
     finally:
-        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()

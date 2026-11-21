@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import String
-from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
-from geometry_msgs.msg import PoseStamped
-from enum import Enum, auto
-import hashlib
+"""Gestionnaire de mission de livraison : machine à 8 états au-dessus de Nav2.
+
+IDLE -> NAVIGATING -> ARRIVED -> WAITING_CODE -> VERIFYING -> DELIVERING -> RETURNING -> IDLE
+Toute erreur (mission invalide, navigation échouée) passe par ERROR puis
+ramène le robot à la base, pour qu'il puisse accepter une nouvelle mission.
+"""
+from enum import auto, Enum
 import threading
 import time
+
+from geometry_msgs.msg import PoseStamped
+from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+import rclpy
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from std_msgs.msg import String
+
+from patrolbot_delivery.mission import code_is_valid, parse_mission
+
 
 class DeliveryState(Enum):
     IDLE = auto()
@@ -19,42 +29,43 @@ class DeliveryState(Enum):
     RETURNING = auto()
     ERROR = auto()
 
+
 class DeliveryManager(Node):
-    CODE_TIMEOUT = 120.0
 
     def __init__(self):
         super().__init__('delivery_manager')
+        self.declare_parameter('code_timeout', 120.0)
+        self.declare_parameter('base_x', 0.0)
+        self.declare_parameter('base_y', 0.0)
+        self.code_timeout = self.get_parameter('code_timeout').value
+
         self.state = DeliveryState.IDLE
+        self.lock = threading.Lock()
         self.navigator = BasicNavigator()
-        self.code_livraison = "1234"
+        self.nav_ready = False
+        self.expected_code = None
         self.code_timer = None
 
-        # Publishers
         self.status_pub = self.create_publisher(String, '/delivery/status', 10)
-
-        # Subscribers
         self.create_subscription(String, '/delivery/new_mission', self.mission_cb, 10)
         self.create_subscription(String, '/delivery/code_submitted', self.code_cb, 10)
+        self.create_timer(1.0, self.publish_status)   # état republié pour les nouveaux abonnés
 
-        self.get_logger().info('Delivery Manager démarré !')
-        self.publier_status()
+        self.get_logger().info('Delivery Manager démarré')
 
+    # ── Machine à états ──────────────────────────────────────────────────────
     def transition(self, new_state, reason=''):
-        self.get_logger().info(f'FSM: {self.state.name} → {new_state.name} [{reason}]')
+        self.get_logger().info(f'FSM: {self.state.name} -> {new_state.name} [{reason}]')
         self.state = new_state
-        self.publier_status()
+        self.publish_status()
 
-    def publier_status(self):
+    def publish_status(self):
         msg = String()
         msg.data = f'STATE:{self.state.name}'
         self.status_pub.publish(msg)
 
-    def verify_code(self, submitted, expected):
-        h1 = hashlib.sha256(submitted.encode()).hexdigest()
-        h2 = hashlib.sha256(expected.encode()).hexdigest()
-        return h1 == h2
-
-    def creer_pose(self, x, y):
+    # ── Navigation ───────────────────────────────────────────────────────────
+    def make_pose(self, x, y):
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.navigator.get_clock().now().to_msg()
@@ -63,70 +74,87 @@ class DeliveryManager(Node):
         pose.pose.orientation.w = 1.0
         return pose
 
+    def go_to(self, x, y):
+        if not self.nav_ready:
+            self.navigator.waitUntilNav2Active()
+            self.nav_ready = True
+        self.navigator.goToPose(self.make_pose(x, y))
+        while not self.navigator.isTaskComplete():
+            time.sleep(0.1)
+        return self.navigator.getResult() == TaskResult.SUCCEEDED
+
+    # ── Callbacks ────────────────────────────────────────────────────────────
     def mission_cb(self, msg):
-        if self.state != DeliveryState.IDLE:
-            self.get_logger().warn('Mission en cours — ignorée')
-            return
-        try:
-            parts = msg.data.split(',')
-            x = float(parts[0])
-            y = float(parts[1])
-            code = parts[2]
-            self.code_livraison = code
-            self.get_logger().info(f'Nouvelle mission → ({x}, {y}) code:{code}')
-            threading.Thread(target=self.executer_mission, args=(x, y)).start()
-        except Exception as e:
-            self.get_logger().error(f'Erreur mission: {e}')
-            self.transition(DeliveryState.ERROR, str(e))
+        with self.lock:
+            if self.state != DeliveryState.IDLE:
+                self.get_logger().warn('Mission refusée : une mission est déjà en cours')
+                return
+            try:
+                x, y, code = parse_mission(msg.data)
+            except ValueError as e:
+                self.get_logger().error(f'Mission invalide : {e}')
+                return
+            self.expected_code = code
+            self.transition(DeliveryState.NAVIGATING, f'vers ({x:.2f}, {y:.2f})')
+        threading.Thread(target=self.run_mission, args=(x, y), daemon=True).start()
 
     def code_cb(self, msg):
-        if self.state == DeliveryState.WAITING_CODE:
-            self.get_logger().info(f'Code reçu: {msg.data}')
-            self.transition(DeliveryState.VERIFYING, 'code reçu')
+        with self.lock:
+            if self.state != DeliveryState.WAITING_CODE:
+                return
             if self.code_timer:
                 self.code_timer.cancel()
-            if self.verify_code(msg.data, self.code_livraison):
+            self.transition(DeliveryState.VERIFYING, 'code reçu')
+            ok = code_is_valid(msg.data, self.expected_code)
+            self.expected_code = None
+            if ok:
                 self.transition(DeliveryState.DELIVERING, 'code correct')
-                self.get_logger().info('✅ Livraison confirmée !')
-                time.sleep(2)
-                self.transition(DeliveryState.RETURNING, 'livraison terminée')
-                threading.Thread(target=self.retour_base).start()
             else:
                 self.transition(DeliveryState.RETURNING, 'code incorrect')
-                threading.Thread(target=self.retour_base).start()
+        threading.Thread(target=self.finish_delivery, args=(ok,), daemon=True).start()
 
-    def executer_mission(self, x, y):
-        self.transition(DeliveryState.NAVIGATING, f'vers ({x},{y})')
-        goal = self.creer_pose(x, y)
-        self.navigator.goToPose(goal)
-        while not self.navigator.isTaskComplete():
-            time.sleep(0.1)
-        result = self.navigator.getResult()
-        if result == TaskResult.SUCCEEDED:
+    def code_timeout_cb(self):
+        with self.lock:
+            if self.state != DeliveryState.WAITING_CODE:
+                return
+            self.expected_code = None
+            self.transition(DeliveryState.RETURNING, f'aucun code après {self.code_timeout:.0f} s')
+        self.return_to_base()
+
+    # ── Séquences (exécutées dans un thread) ────────────────────────────────
+    def run_mission(self, x, y):
+        if not self.go_to(x, y):
+            with self.lock:
+                self.transition(DeliveryState.ERROR, 'navigation échouée')
+                self.transition(DeliveryState.RETURNING, 'abandon de la mission')
+            self.return_to_base()
+            return
+        with self.lock:
             self.transition(DeliveryState.ARRIVED, 'destination atteinte')
-            self.transition(DeliveryState.WAITING_CODE, 'attente code')
-            self.code_timer = threading.Timer(
-                self.CODE_TIMEOUT, self.timeout_callback)
+            self.transition(DeliveryState.WAITING_CODE, 'attente du code')
+            self.code_timer = threading.Timer(self.code_timeout, self.code_timeout_cb)
             self.code_timer.start()
-        else:
-            self.transition(DeliveryState.ERROR, 'navigation échouée')
 
-    def timeout_callback(self):
-        self.get_logger().error(f'⏰ TIMEOUT {self.CODE_TIMEOUT}s')
-        self.transition(DeliveryState.RETURNING, 'timeout')
-        self.retour_base()
+    def finish_delivery(self, delivered):
+        if delivered:
+            self.get_logger().info('Livraison confirmée')
+            time.sleep(2.0)   # temps de retrait du colis
+            with self.lock:
+                self.transition(DeliveryState.RETURNING, 'livraison terminée')
+        self.return_to_base()
 
-    def retour_base(self):
-        goal = self.creer_pose(0.0, 0.0)
-        self.navigator.goToPose(goal)
-        while not self.navigator.isTaskComplete():
-            time.sleep(0.1)
-        self.transition(DeliveryState.IDLE, 'retour base terminé')
+    def return_to_base(self):
+        ok = self.go_to(self.get_parameter('base_x').value, self.get_parameter('base_y').value)
+        with self.lock:
+            if not ok:
+                self.transition(DeliveryState.ERROR, 'retour à la base échoué')
+            self.transition(DeliveryState.IDLE, 'prêt pour une nouvelle mission')
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = DeliveryManager()
-    executor = rclpy.executors.MultiThreadedExecutor()
+    executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()
