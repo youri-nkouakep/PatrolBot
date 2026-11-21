@@ -15,7 +15,7 @@ PatrolBot is an autonomous delivery robot built on **ROS 2 Humble** and **Nav2**
 | Module | What it does |
 | --- | --- |
 | Perception | Converts the 360° LiDAR scan into obstacle density over 36 sectors of 10° each |
-| AI planner | Ranks candidate destinations with a weighted multi-criteria score (distance, time, obstacles in that direction, risk, energy) |
+| Destination selection | Ranks candidate destinations with a weighted multi-criteria score (distance, time, obstacles in that direction, risk, energy) |
 | Delivery manager | Runs an 8-state FSM on top of Nav2: code timeout, constant-time code check, error recovery |
 | Self-recovery | Detects a stuck robot from odometry during a mission, then backs up and spins in place |
 | API | Exposes REST endpoints with input validation, plus a WebSocket for live tracking |
@@ -30,7 +30,7 @@ flowchart LR
     DM -- goToPose --> NAV[Nav2<br/>AMCL + planner + DWB]
     NAV -- /cmd_vel --> ROBOT[TurtleBot3<br/>Gazebo]
     ROBOT -- /scan --> PER[obstacle_detector]
-    PER -- /obstacle_density --> AI[ai_planner]
+    PER -- /obstacle_density --> AI[ai_planner<br/>destination selection]
     ROBOT -- /odom --> REC[recovery_node]
     DM -- /delivery/status --> REC
     DM -- /delivery/status --> API
@@ -63,7 +63,7 @@ stateDiagram-v2
 patrolbot/
 ├── src/
 │   ├── patrolbot_perception/   # LiDAR → obstacle density per sector
-│   ├── patrolbot_ai/           # multi-criteria scoring (scoring.py, no ROS dependency)
+│   ├── patrolbot_ai/           # multi-criteria destination selection (scoring.py, no ROS dependency)
 │   ├── patrolbot_delivery/     # delivery FSM on top of Nav2
 │   ├── patrolbot_recovery/     # stuck detection (stuck_detector.py) and maneuvers
 │   ├── patrolbot_api/          # FastAPI server (REST + WebSocket)
@@ -142,19 +142,48 @@ Values measured in simulation:
 
 Recovery maneuvers are configured in `stuck_detector.py`: a 0.3 m backup (3.0 s), then a half turn in place (3.1 s).
 
-## Limitations and next steps
+## Current limitations
 
+- The robot has only been tested in simulation so far.
 - The recovery node publishes on `/cmd_vel` alongside the Nav2 controller. A cleaner design would move these maneuvers into Nav2's behavior tree.
-- The AI planner ranks candidate destinations but does not feed Nav2 yet. Next step: plug it into multi-stop missions.
-- The robot has only been tested in simulation. Next step: run it on a real TurtleBot3.
+- Destination selection uses straight-line distance and does not feed Nav2 missions yet.
+
+## Roadmap
+
+### 1. Engineering quality
+- [x] Unit tests for the core logic (scoring, stuck detection, mission parsing)
+- [ ] Score destinations with the **real Nav2 path length** (`ComputePathToPose`) instead of straight-line distance
+- [ ] Rewrite the LiDAR perception node in **C++ (`rclcpp`)** and compare its latency with the Python version
+- [ ] Integration tests with `launch_testing`, plus **GitHub Actions CI** (`colcon build` and tests on every push)
+- [ ] **Dockerfile** to run the whole simulation with one command
+
+### 2. Real robot
+- [ ] Deploy on a **real TurtleBot3 at UTBM**: SLAM map of a corridor, then 10 deliveries
+- [ ] Report the success rate and mean delivery time, with a demo video
+
+### 3. Vision
+- [ ] **Safety stop**: YOLO person detection on the robot camera; the robot slows down, then stops under a distance threshold. Metrics: detection recall, stopping distance
+- [ ] **Precise docking** at the delivery point: ArUco or AprilTag markers, pose from PnP, camera-guided final approach. Metric: final position error in cm, compared with AMCL alone
+- [ ] **LiDAR + camera fusion**: classify obstacles as people or objects and write them into a Nav2 costmap layer, to keep a wider margin around people
+
+### 4. Showcase: a real delivery fleet
+- [ ] **2 real TurtleBots** (or 1 real + 3 simulated), each in its own ROS 2 namespace with Nav2
+- [ ] Mission assignment with the **Hungarian algorithm** (cost = Nav2 path length), with automatic reassignment when a robot is stuck
+- [ ] **Web fleet dashboard** (React + WebSocket): live map, mission queue, video stream of each robot
+- [ ] **Benchmark on 30 deliveries**: success rate, deliveries per hour, gain from 2 robots over 1
+- [ ] 90-second demo video: both robots in a UTBM corridor
 
 ---
 
-## Authors
+## Team and my role
 
-- **Youri Nkouakep** ([@youri-nkouakep](https://github.com/youri-nkouakep))
-- **N'faly Sangare**
-- **Zakaria Nasr-Allah**
+Team of 3: **Youri Nkouakep** ([@youri-nkouakep](https://github.com/youri-nkouakep)), N'faly Sangare and Zakaria Nasr-Allah.
+
+**I designed and implemented the software**:
+- ROS 2 architecture and the 5 nodes (perception, destination selection, delivery FSM, recovery, API);
+- Nav2 and SLAM integration, the Gazebo worlds and the performance measurements.
+
+My teammates wrote the documentation (specifications and project report).
 
 Master IA et Objets Connectés, Université Ibn Tofail (Kénitra). Module: Real-Time Systems, 2025-2026.
 

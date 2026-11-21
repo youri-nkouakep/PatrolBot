@@ -3,7 +3,7 @@
 <package format="3">
   <name>patrolbot_ai</name>
   <version>1.1.0</version>
-  <description>Planificateur multicritère (distance, temps, obstacles, risque, énergie)</description>
+  <description>Sélection de destination multicritère (distance, temps, obstacles, risque, énergie)</description>
   <maintainer email="yourinkouakep@gmail.com">Youri Nkouakep</maintainer>
   <license>MIT</license>
 

@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='Youri Nkouakep',
     maintainer_email='yourinkouakep@gmail.com',
-    description='Planificateur multicritère (distance, temps, obstacles, risque, énergie)',
+    description='Sélection de destination multicritère (distance, temps, obstacles, risque, énergie)',
     license='MIT',
     extras_require={
         'test': [

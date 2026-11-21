@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Planificateur multicritère : choisit la meilleure destination candidate.
+"""Sélection de destination multicritère : choisit la meilleure destination candidate.
 
 Le score combine distance, temps, densité d'obstacles dans la direction de la
 destination, risque et énergie (voir scoring.py).
