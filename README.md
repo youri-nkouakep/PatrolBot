@@ -4,6 +4,8 @@
 [![Gazebo](https://img.shields.io/badge/Gazebo-Classic%2011-orange)](https://classic.gazebosim.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
+> **Context:** a 2025 master's project at Université Ibn Tofail (Master IA et Objets Connectés). I took it up again and adapted it in 2026 before publishing it here.
+
 PatrolBot is an autonomous delivery robot built on **ROS 2 Humble** and **Nav2**, simulated in Gazebo with a TurtleBot3 Waffle Pi. Customers send a mission through a **REST API**. The robot drives to the address, waits for a **delivery code**, then returns to its base. If it gets stuck along the way, it **recovers on its own**.
 
 > Mission flow in one request: `POST /api/mission` → Nav2 navigation → code check at the door → return to base. An 8-state FSM drives the whole flow and recovers from every failure.
