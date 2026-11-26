@@ -187,7 +187,7 @@ Team of 3: **Youri Nkouakep** ([@youri-nkouakep](https://github.com/youri-nkouak
 
 My teammates wrote the documentation (specifications and project report).
 
-Master IA et Objets Connectés, Université Ibn Tofail (Kénitra). Module: Real-Time Systems, 2025-2026.
+Master IA et Objets Connectés, Université Ibn Tofail (Kénitra). Module: Real-Time Systems, 2025.
 
 ## License
 
